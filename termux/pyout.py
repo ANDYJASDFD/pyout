@@ -344,7 +344,7 @@ img.ondragstart=e=>e.preventDefault();
 document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k;
  b.addEventListener('pointerdown',e=>{e.preventDefault();post('/event',{t:'kdown',key:k})});
  const up=e=>post('/event',{t:'kup',key:k});b.addEventListener('pointerup',up);b.addEventListener('pointerleave',up)});
-img.src='/stream';
+fetch('/files').then(r=>r.json()).then(r=>{if(r.running)img.src='/stream?'+Date.now()}).catch(()=>{});
 </script></body></html>"""
 
 

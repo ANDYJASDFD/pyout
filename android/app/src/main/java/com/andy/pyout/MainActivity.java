@@ -66,6 +66,11 @@ public class MainActivity extends Activity {
 
         web.setWebChromeClient(new WebChromeClient() {
             @Override
+            public void onProgressChanged(WebView v, int p) {
+                if (p >= 60 && !failed) status.setVisibility(View.GONE);
+            }
+
+            @Override
             public boolean onConsoleMessage(ConsoleMessage m) {
                 if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
                     showStatus("Page script error:\n" + m.message() + "\nline " + m.lineNumber());
@@ -78,6 +83,11 @@ public class MainActivity extends Activity {
             @Override
             public void onPageStarted(WebView v, String url, android.graphics.Bitmap icon) {
                 failed = false;
+            }
+
+            @Override
+            public void onPageCommitVisible(WebView v, String url) {
+                if (!failed) status.setVisibility(View.GONE);
             }
 
             @Override
