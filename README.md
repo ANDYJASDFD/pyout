@@ -14,7 +14,7 @@ PyOut is two parts that talk over `127.0.0.1` (your own phone, no internet neede
 
 ## Install (3 steps)
 
-1. **App:** open the **Actions** tab of this repo, open the latest green build, download **PyOut-apk**, unzip it and install `app-debug.apk` (Android will warn about apps from outside the Play Store: this is normal, the source code is right here).
+1. **App:** go to the [**Releases**](https://github.com/ANDYJASDFD/pyout/releases/latest) page and download **PyOut.apk**, then install it (Android will warn about apps from outside the Play Store: this is normal, the full source code is in this repo and GitHub builds the APK from it).
 2. **Runner:** in Termux:
    ```
    git clone https://github.com/ANDYJASDFD/pyout
