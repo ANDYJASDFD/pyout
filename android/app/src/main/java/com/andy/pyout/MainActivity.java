@@ -7,6 +7,7 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.content.Intent;
 import android.os.Bundle;
+import android.webkit.JavascriptInterface;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -107,6 +108,11 @@ public class MainActivity extends Activity {
                 }
             }
         });
+        web.addJavascriptInterface(new Object() {
+            @JavascriptInterface public void start() {
+                runOnUiThread(new Runnable() { @Override public void run() { startRunner(); } });
+            }
+        }, "PyOutApp");
         web.loadUrl(URL);
     }
 
@@ -139,6 +145,12 @@ public class MainActivity extends Activity {
         } catch (Throwable e) {
             // Termux missing or not allowing it: the normal "connecting" screen still works
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        startRunner();
     }
 
     @Override
