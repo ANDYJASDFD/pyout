@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -34,6 +35,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        startRunner();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         FrameLayout root = new FrameLayout(this);
@@ -110,6 +112,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        if (code == 9) { startRunner(); return; }
         if (pendingCam != null) {
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
                 pendingCam.grant(pendingCam.getResources());
@@ -117,6 +120,24 @@ public class MainActivity extends Activity {
                 pendingCam.deny();
             }
             pendingCam = null;
+        }
+    }
+
+    /** Asks Termux to run ~/.pyout_start.sh (starts the runner if it is not running yet). */
+    private void startRunner() {
+        try {
+            if (checkSelfPermission("com.termux.permission.RUN_COMMAND") != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{"com.termux.permission.RUN_COMMAND"}, 9);
+                return;
+            }
+            Intent i = new Intent("com.termux.RUN_COMMAND");
+            i.setClassName("com.termux", "com.termux.app.RunCommandService");
+            i.putExtra("com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/home/.pyout_start.sh");
+            i.putExtra("com.termux.RUN_COMMAND_WORKDIR", "/data/data/com.termux/files/home");
+            i.putExtra("com.termux.RUN_COMMAND_BACKGROUND", true);
+            if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
+        } catch (Throwable e) {
+            // Termux missing or not allowing it: the normal "connecting" screen still works
         }
     }
 
