@@ -19,6 +19,13 @@ FRAME = os.path.join(HOME, "frame.jpg")
 EVENTS = os.path.join(HOME, "events.jsonl")
 CAMFILE = os.path.join(HOME, "cam.jpg")
 WANT = os.path.join(HOME, "cam.want")
+SNDDIR = os.path.join(HOME, "snd")   # PYSOUND
+
+def snd_tail():
+    try:
+        return open(os.path.join(SNDDIR, "log")).read().split()[-10:]
+    except Exception:
+        return []
 
 
 # =========================================================== child side: runs the user's script
@@ -255,6 +262,107 @@ def child_main(script):
         return mod
     builtins.__import__ = imp
 
+    # ---------------- sound: sounddevice / winsound / playsound -> the PyOut app
+    import types as _types
+    snd = {"last": 0, "end": 0.0}
+
+    def snd_put(data, ext):
+        os.makedirs(SNDDIR, exist_ok=True)
+        n = max(int(time.time() * 1000), snd["last"] + 1); snd["last"] = n
+        name = "%d.%s" % (n, ext)
+        if ext != "stop":
+            with open(os.path.join(SNDDIR, name), "wb") as f: f.write(data)
+        lg = os.path.join(SNDDIR, "log")
+        with open(lg, "a") as f: f.write(name + "\n")
+        try:
+            lines = open(lg).read().split()
+            if len(lines) > 200:
+                open(lg, "w").write("\n".join(lines[-50:]) + "\n")
+                keep = set(lines[-50:])
+                for fn in os.listdir(SNDDIR):
+                    if fn != "log" and fn not in keep:
+                        try: os.remove(os.path.join(SNDDIR, fn))
+                        except Exception: pass
+        except Exception:
+            pass
+        return name
+
+    def snd_wav(data, sr):
+        import io, wave, numpy as np
+        a = np.asarray(data)
+        if a.dtype.kind == "f": a = np.clip(a, -1, 1) * 32767
+        a = a.astype("<i2")
+        ch = 1 if a.ndim == 1 else a.shape[1]
+        b = io.BytesIO()
+        with wave.open(b, "wb") as w:
+            w.setnchannels(ch); w.setsampwidth(2); w.setframerate(int(sr)); w.writeframes(a.tobytes())
+        return b.getvalue(), len(a) / float(sr)
+
+    def snd_play(data, sr=44100, blocking=False):
+        raw, dur = snd_wav(data, sr)
+        snd_put(raw, "wav")
+        snd["end"] = time.time() + dur
+        if blocking: time.sleep(dur)
+
+    def snd_wait():
+        time.sleep(max(0.0, snd["end"] - time.time()))
+
+    def snd_stop():
+        snd_put(b"", "stop"); snd["end"] = 0.0
+
+    sdm = _types.ModuleType("sounddevice")
+    sdm.play = lambda data, samplerate=44100, mapping=None, blocking=False, loop=False, **k: snd_play(data, samplerate, blocking)
+    sdm.wait = lambda *a, **k: snd_wait()
+    sdm.stop = lambda *a, **k: snd_stop()
+    sdm.query_devices = lambda *a, **k: {"name": "PyOut speaker", "max_output_channels": 2, "max_input_channels": 0, "default_samplerate": 44100.0}
+    sdm.default = _types.SimpleNamespace(samplerate=44100, channels=2, device=(0, 0))
+    sdm.get_stream = lambda: None
+
+    def _nomic(*a, **k): raise RuntimeError("PyOut has no microphone input in sounddevice yet")
+    sdm.rec = sdm.InputStream = sdm.Stream = _nomic
+
+    class _Out:
+        def __init__(self, samplerate=44100, channels=1, **k): self.sr, self.ch = samplerate, channels; self.on = False
+        def start(self): self.on = True
+        def stop(self): self.on = False
+        def close(self): self.on = False
+        def write(self, data): snd_play(data, self.sr, True)
+        def __enter__(self): self.start(); return self
+        def __exit__(self, *a): self.close()
+    sdm.OutputStream = _Out
+    sys.modules["sounddevice"] = sdm
+
+    def snd_file(path, block=True):
+        raw = open(path, "rb").read()
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        ext = ext if ext in ("wav", "mp3", "ogg", "m4a", "flac") else "wav"
+        snd_put(raw, ext)
+        dur = 0.0
+        try:
+            import wave
+            with wave.open(path) as w: dur = w.getnframes() / float(w.getframerate())
+        except Exception:
+            dur = len(raw) / 16000.0
+        snd["end"] = time.time() + dur
+        if block: time.sleep(dur)
+
+    psm = _types.ModuleType("playsound")
+    psm.playsound = lambda path, block=True: snd_file(path, block)
+    sys.modules["playsound"] = psm
+
+    if sys.platform != "win32":
+        wsm = _types.ModuleType("winsound")
+        def _beep(freq, dur):
+            import numpy as np
+            sr = 22050
+            t = np.arange(int(sr * dur / 1000.0)) / sr
+            snd_play(0.4 * np.sin(2 * np.pi * freq * t), sr, True)
+        wsm.Beep = _beep
+        wsm.MessageBeep = lambda *a: _beep(800, 150)
+        wsm.SND_FILENAME, wsm.SND_ASYNC, wsm.SND_LOOP, wsm.SND_PURGE, wsm.SND_NODEFAULT = 0x20000, 1, 8, 0x40, 2
+        wsm.PlaySound = lambda name, flags=0: snd_file(name, not (flags & 1)) if name else snd_stop()
+        sys.modules["winsound"] = wsm
+
     code = compile(open(script, "rb").read(), script, "exec")
     try:
         exec(code, {"__name__": "__main__", "__file__": os.path.abspath(script)})
@@ -437,7 +545,14 @@ class H(BaseHTTPRequestHandler):
         elif p == "/console":
             since = int(dict(x.split("=") for x in q.split("&") if "=" in x).get("since", 0))
             with R.lock: chunk = R.log[since:]; n = len(R.log)
-            self._send(200, {"text": "".join(chunk), "n": n, "running": R.running(), "cam": R.running() and os.path.exists(WANT)})
+            self._send(200, {"text": "".join(chunk), "n": n, "running": R.running(), "cam": R.running() and os.path.exists(WANT), "snds": snd_tail()})
+        elif p == "/snd":
+            import re as _re, mimetypes
+            f = dict(x.split("=", 1) for x in q.split("&") if "=" in x).get("f", "")
+            if _re.fullmatch(r"\d+\.(wav|mp3|ogg|m4a|flac)", f) and os.path.isfile(os.path.join(SNDDIR, f)):
+                self._send(200, open(os.path.join(SNDDIR, f), "rb").read(), mimetypes.guess_type(f)[0] or "audio/wav")
+            else:
+                self._send(404, b"", "text/plain")
         elif p == "/read":
             import urllib.parse
             f = urllib.parse.unquote(dict(x.split("=", 1) for x in q.split("&") if "=" in x).get("file", ""))
@@ -594,8 +709,8 @@ async function files(){try{const r=await (await fetch('/files')).json();const s=
 files();setInterval(files,5000);
 $('#run').onclick=()=>{$('#con').textContent='';since=0;post('/run',{file:$('#sel').value})};
 $('#stp').onclick=()=>post('/stop');
-let since=0;let cbusy=false;setInterval(async()=>{if(cbusy)return;cbusy=true;try{const r=await (await fetch('/console?since='+since)).json();since=r.n;if(r.cam&&!camOn){camAuto=true;startCam()}else if(!r.cam&&camOn&&camAuto){stopCam()};
- if(r.text){const c=$('#con');c.textContent+=r.text;c.scrollTop=c.scrollHeight;const c2=$('#con2');c2.textContent+=r.text;c2.scrollTop=c2.scrollHeight}}catch(e){}cbusy=false},200);
+let since=0;let cbusy=false;setInterval(async()=>{if(cbusy)return;cbusy=true;try{const r=await (await fetch('/console?since='+since)).json();since=r.n;sndPoll(r);if(r.cam&&!camOn){camAuto=true;startCam()}else if(!r.cam&&camOn&&camAuto){stopCam()};
+ if(r.text){if(r.text.indexOf('\x07')>=0)pyBell();const c=$('#con');c.textContent+=r.text;c.scrollTop=c.scrollHeight;const c2=$('#con2');c2.textContent+=r.text;c2.scrollTop=c2.scrollHeight}}catch(e){}cbusy=false},200);
 $('#snd').onclick=()=>{post('/stdin',{text:$('#inp').value});$('#inp').value=''};$('#inp').onkeydown=e=>{if(e.key=='Enter')$('#snd').click()};
 const img=$('#scr');function pt(e){const r=img.getBoundingClientRect(),t=e.touches?(e.touches[0]||e.changedTouches[0]):e;const nw=img.naturalWidth||1,nh=img.naturalHeight||1,k=Math.min(r.width/nw,r.height/nh),ox=(r.width-nw*k)/2,oy=(r.height-nh*k)/2;return {x:(t.clientX-r.left-ox)/k,y:(t.clientY-r.top-oy)/k}}
 let dn=false,lm=0;
@@ -689,6 +804,16 @@ $('nav button[data-t=libs]').addEventListener('click',loadPkgs);
 setInterval(async()=>{if(!$('#libs').classList.contains('on'))return;
  try{const r=await (await fetch('/piplog?since=999999999')).json();if(lastBusy&&!r.busy){$('#lstat').textContent='Done';loadPkgs()}lastBusy=r.busy}catch(e){}},700);
 setLibView('inst');
+/*PYSOUND*/let sndSeen=null,sndAud=[];
+function sndPoll(r){if(!r.snds)return;const ids=r.snds.map(x=>parseInt(x));
+ if(sndSeen===null){sndSeen=ids.length?Math.max(...ids):0;return}
+ r.snds.forEach((f,i)=>{if(ids[i]>sndSeen){sndSeen=ids[i];
+  if(f.endsWith('.stop')){sndAud.forEach(a=>{try{a.pause()}catch(e){}});sndAud=[]}
+  else{const a=new Audio('/snd?f='+f);sndAud.push(a);a.onended=()=>{sndAud=sndAud.filter(x=>x!==a)};a.play().catch(e=>{})}}})}
+/*PYBELL*/let bellCtx=null;function pyBell(){try{bellCtx=bellCtx||new (window.AudioContext||window.webkitAudioContext)();bellCtx.resume();
+ for(let i=0;i<4;i++){const o=bellCtx.createOscillator(),g=bellCtx.createGain();o.frequency.value=880;o.connect(g);g.connect(bellCtx.destination);
+  const t=bellCtx.currentTime+i*0.45;g.gain.setValueAtTime(0.5,t);g.gain.setValueAtTime(0,t+0.28);o.start(t);o.stop(t+0.3)}}catch(e){}
+ try{navigator.vibrate&&navigator.vibrate([300,100,300])}catch(e){}}
 </script></body></html>"""
 
 
