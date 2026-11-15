@@ -85,25 +85,38 @@ def child_main(script):
         def __getitem__(self, k): return k in self.keys
 
     # ---------------- matplotlib hook
-    def hook_mpl():
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import io
+ def hook_mpl():
+    import matplotlib
+    matplotlib.use("Agg")
 
-        def show(*a, **k):
-            for n in plt.get_fignums():
-                fig = plt.figure(n)
-                fig.canvas.draw()
-                import numpy as np
-                buf = np.asarray(fig.canvas.buffer_rgba())[..., :3]
-                publish_array(np.ascontiguousarray(buf))
-                time.sleep(0.6)
+    import matplotlib.pyplot as plt
+    import io
 
-        def pause(t=0.001):
-            show(); time.sleep(max(t, 0.001))
+    def show(*args, **kwargs):
+        figures = plt.get_fignums()
 
-        plt.show, plt.pause = show, pause
+        for number in figures:
+            fig = plt.figure(number)
+
+            # Render the figure directly as JPEG.
+            # No OpenCV required!
+            buf = io.BytesIO()
+            fig.savefig(
+                buf,
+                format="jpeg",
+                dpi=fig.dpi,
+                bbox_inches="tight"
+            )
+
+            publish(buf.getvalue())
+            time.sleep(0.6)
+
+    def pause(seconds=0.001):
+        show()
+        time.sleep(max(seconds, 0.001))
+
+    plt.show = show
+    plt.pause = pause
 
     # ---------------- OpenCV hook
     def hook_cv2():
