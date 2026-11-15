@@ -91,15 +91,12 @@ def child_main(script):
 
     import matplotlib.pyplot as plt
     import io
+    import time
 
     def show(*args, **kwargs):
-        figures = plt.get_fignums()
-
-        for number in figures:
+        for number in plt.get_fignums():
             fig = plt.figure(number)
 
-            # Render the figure directly as JPEG.
-            # No OpenCV required!
             buf = io.BytesIO()
             fig.savefig(
                 buf,
